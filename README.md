@@ -7,19 +7,8 @@ This plugin forces models to output valid JSON of a specified schema. Most of th
 Forked from https://github.com/hallucinate-games/oobabooga-jsonformer-plugin
 
 Changes:
-* added check to force llms to follow a user designated schema. place jsonSchema_id={schemas.json array index} on the last line of your prompt
-* added schemas.json file
-* enabled normal (non-schema output) when schema_id not found or invalid
-
-Limitations:
-* coded to work within a docker container
-* does not use text_generation.generate_reply_HF
-* hardcoded text_generation.generate_reply_custom
-
-Todo:
-* allow for use outside of docker container
-* remove hardcoded generate_reply_custom
-* enable generate_reply_HF
+* output now follows a user designated schema from the schemas.json file by placing js={schemas.json array index} on its own line in the prompt (last line seems to be best)
+* enabled normal (non-schema output) when js=# is not in the prompt and on its own line
 
 
 example schema (append to schemas.json) incrementing the id of the last schema by 1:
@@ -27,8 +16,7 @@ example schema (append to schemas.json) incrementing the id of the last schema b
 ```
 ,,,
 {	
-    "jsonSchema_id": 2,
-    "$schema": "http://json-schema.org/draft-07/schema#",
+    "id": 2,
     "type": "object",
     "properties": {
         "name": {"type": "string"},
@@ -42,6 +30,30 @@ example schema (append to schemas.json) incrementing the id of the last schema b
     "required": ["name", "age"]
     }
 }
+```
+
+example prompt using a local WizardLM llm:
+```
+Input
+Goal: Research Tacos
+
+Create a list of tasks to accomplish the goal.
+
+js=1
+### Response:
+```
+
+example output:
+```
+[
+    "Research taco history",
+    "Learn about different types of tacos",
+    "Explore regional variations",
+    "Understand ingredients used in making tacos",
+    "Discover popular taco toppings and fillings",
+    "Investigate cultural significance of tacos",
+    "Find recipes for homemade tacos"
+]
 ```
 
 You can install in via the `text-generation-webui` using the github link to this repo or if you prefer to install it manually:

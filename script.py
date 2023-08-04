@@ -287,10 +287,26 @@ class Jsonformer:
     def __call__(self) -> Generator[str, None, None]:
         self.progress = ''
         self.indent = 0
-        for token in self.generate_value(self.json_schema):
-            yield token
+        if self.json_schema:
+            for token in self.generate_value(self.json_schema):
+                yield token
+                if shared.stop_everything:
+                    break
+        else:
+            response_generator = self.generation_func(
+                self.get_prompt(),           
+                {
+                    'temperature': self.temperature,
+                    'max_new_tokens': None
+                },
+            )
             if shared.stop_everything:
-                break
+                return ''
+            for i, response in enumerate(response_generator):
+                yield response
+                if shared.stop_everything:
+                    break
+  
 
 def custom_generate_reply(question, original_question, seed, state, stopping_strings, is_chat=False) -> str:
     """ Overrides the main text generation function """
@@ -328,63 +344,51 @@ def custom_generate_reply(question, original_question, seed, state, stopping_str
         }
         return generate_func(wrapped_prompt, original_question, locked_seed, wrapped_state, stopping_strings, is_chat)
 
+    def disabled_generate_func(question: str, generation_settings: GenerationSettings):
+        return generate_func(question, original_question, seed, state, stopping_strings, is_chat)
+
 ##### Search for a "schema_id" in the prompt and use the corresponding schema to generate a response
-    with open("/app/extensions/jsonformer/schemas.json", 'r') as file:
-        json_schemas = file.read().split(',,,')
+    try:
+        try:
+            with open("/app/extensions/jsonformer/schemas.json", 'r') as file:
+                json_schemas = file.read().split(',,,')
+        except:
+            with open("./extensions/jsonformer/schemas.json", 'r') as file:
+                json_schemas = file.read().split(',,,')
+    except:
+        print("schemas.json not found")
+        return
+
 
     ### format: jsonSchema_id={array number}
     ### requried to be on its own line, best location appears to be at the very bottom, sometimes the output will only provide a single response when the schema includes an array, adding multiple examples seems to fix this: ["{{TASK-1}}", "{{TASK-2}}"]
     ### see schemas.json for examples
-    schema_match = re.search(r"^jsonSchema_id=(\d+)$", question, re.MULTILINE)
+    schema_match = re.search(r"^js=(\d+)$", question, re.MULTILINE)
     disabled = False
     if schema_match and params['enabled']:
         schema_id = int(schema_match.group(1))
         try:
             import_schema = json_schemas[schema_id]
-            jsonformer = Jsonformer(
-                generation_func=wrapped_generate_func,
-                json_schema=json.loads(textwrap.dedent(import_schema)),
-                prompt=question,
-                temperature=state['temperature'],
-                manual_prompt=params['manual_prompt'],
-            )
-            yield from jsonformer()        
         except:
-            disabled = True
-    else:
-        disabled = True
-
-    ### arche: return generate_func does nothing, so hard copied generate_reply_custom into extension
-
-    # Cede control back to oobabooga, the user has requested that JSONformer not interfere
-    # if not params['enabled']
-        # return generate_func(question, original_question, seed, state, stopping_strings, is_chat)
-
-    ### if extension is disabled or schemaid/schema not found then run generate_reply_custom
-    if disabled:
-        t0 = time.time()
-        reply = ''
-        try:
-            if not is_chat:
-                yield ''
-
-            if not state['stream']:
-                reply = shared.model.generate(question, state)
-                yield reply
-            else:
-                for reply in shared.model.generate_with_streaming(question, state):
-                    yield reply
-
-        except Exception:
-            traceback.print_exc()
-        finally:
-            t1 = time.time()
-            original_tokens = len(text_generation.encode(original_question)[0])
-            new_tokens = len(text_generation.encode(original_question + reply)[0]) - original_tokens
-            print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {seed})')
+            print("Schema not found in schemas.json")
             return
-      
-      
+        jsonformer = Jsonformer(
+            generation_func=wrapped_generate_func,
+            json_schema=json.loads(textwrap.dedent(import_schema)),
+            prompt=question,
+            temperature=state['temperature'],
+            manual_prompt=params['manual_prompt'],
+        )
+        yield from jsonformer()        
+    else:
+        jsonformer = Jsonformer(
+            generation_func=disabled_generate_func,
+            json_schema=None,
+            prompt=question,
+            temperature=state['temperature'],
+            manual_prompt=True,
+        )
+        yield from jsonformer()   
       
 def ui():
     with gr.Accordion("Click for more information...", open=False):
@@ -424,9 +428,6 @@ def ui():
         Note that the schema is permissive to extra fields. These fields are ignored by JSONformer, but they may influence the behavior of the LLM, for example, you can forbid or allow empty arrays like in the example. This kind of hinting is not bullet-proof, but is surprisingly effective if utilized with care."""))
     with gr.Row():
         enable_checkbox = gr.Checkbox(params['enabled'], label="Enable JSONformer plugin", info="Disabling this setting causes prompts to be executed normally")
-
-    # with gr.Row():
-        # schema_codebox = gr.Code(params['json_schema'], lines=14, language='json', label='JSON schema', interactive=True)
 
     with gr.Row():
         manual_prompt_checkbox = gr.Checkbox(params['manual_prompt'], label="Manual prompt", info=textwrap.dedent("""

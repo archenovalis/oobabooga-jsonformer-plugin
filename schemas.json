@@ -1,6 +1,5 @@
 {
-	"jsonSchema_id": 0,
-	"$schema": "http://json-schema.org/draft-07/schema#",
+	"id": 0,
 	"type": "object",
 	"properties": {
 		"thoughts": {
@@ -40,8 +39,7 @@
 	}
 },,,
 {
-	"jsonSchema_id": 1,
-	"$schema": "http://json-schema.org/draft-07/schema#",
+	"id": 1,
 	"type": "array",
 	"items": {"type": "string"},
 	"allowed_empty": "false"
