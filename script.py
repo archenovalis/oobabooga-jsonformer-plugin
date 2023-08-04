@@ -12,20 +12,6 @@ import modules.text_generation as text_generation
 import modules.shared as shared
 
 params = {
-    "json_schema": textwrap.dedent("""
-        {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string"},
-                "age": {"type": "number"},
-                "is_student": {"type": "boolean"},
-                "courses": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "allowed_empty": true
-                }
-            }
-        }"""),
     "manual_prompt": False,
     "enabled": True,
 }
@@ -113,6 +99,10 @@ class Jsonformer:
             stopping_regex,
             regex_return_group=1,
         )
+        
+        if response.endswith(','):
+            response = response.rstrip(',')
+            
         try:
             return float(response)
         except ValueError:
@@ -312,19 +302,13 @@ def custom_generate_reply(question, original_question, seed, state, stopping_str
         yield ''
         return
 
+    shared.stop_everything = False
+    
     if shared.model.__class__.__name__ in ['LlamaCppModel', 'RWKVModel', 'ExllamaModel']:
         generate_func = text_generation.generate_reply_custom
-    elif shared.args.flexgen:
-        generate_func = text_generation.generate_reply_flexgen
     else:
         generate_func = text_generation.generate_reply_HF
-
-    shared.stop_everything = False
-
-    if not params['enabled']:
-        # Cede control back to oobabooga, the user has requested that JSONformer not interfere
-        return generate_func(question, original_question, seed, state, stopping_strings, is_chat)
-
+    
     # Since we generate many times, we need to lock the seed,
     # so we have to account for when the seed is "random" and
     # lock it for the course of the run. It is still random from
@@ -344,16 +328,64 @@ def custom_generate_reply(question, original_question, seed, state, stopping_str
         }
         return generate_func(wrapped_prompt, original_question, locked_seed, wrapped_state, stopping_strings, is_chat)
 
-    jsonformer = Jsonformer(
-        generation_func=wrapped_generate_func,
-        json_schema=json.loads(params['json_schema']),
-        prompt=question,
-        temperature=state['temperature'],
-        manual_prompt=params['manual_prompt'],
-    )
-    
-    yield from jsonformer()
+##### Search for a "schema_id" in the prompt and use the corresponding schema to generate a response
+    with open("/app/extensions/jsonformer/schemas.json", 'r') as file:
+        json_schemas = file.read().split(',,,')
 
+    ### format: jsonSchema_id={array number}
+    ### requried to be on its own line, best location appears to be at the very bottom, sometimes the output will only provide a single response when the schema includes an array, adding multiple examples seems to fix this: ["{{TASK-1}}", "{{TASK-2}}"]
+    ### see schemas.json for examples
+    schema_match = re.search(r"^jsonSchema_id=(\d+)$", question, re.MULTILINE)
+    disabled = False
+    if schema_match and params['enabled']:
+        schema_id = int(schema_match.group(1))
+        try:
+            import_schema = json_schemas[schema_id]
+            jsonformer = Jsonformer(
+                generation_func=wrapped_generate_func,
+                json_schema=json.loads(textwrap.dedent(import_schema)),
+                prompt=question,
+                temperature=state['temperature'],
+                manual_prompt=params['manual_prompt'],
+            )
+            yield from jsonformer()        
+        except:
+            disabled = True
+    else:
+        disabled = True
+
+    ### arche: return generate_func does nothing, so hard copied generate_reply_custom into extension
+
+    # Cede control back to oobabooga, the user has requested that JSONformer not interfere
+    # if not params['enabled']
+        # return generate_func(question, original_question, seed, state, stopping_strings, is_chat)
+
+    ### if extension is disabled or schemaid/schema not found then run generate_reply_custom
+    if disabled:
+        t0 = time.time()
+        reply = ''
+        try:
+            if not is_chat:
+                yield ''
+
+            if not state['stream']:
+                reply = shared.model.generate(question, state)
+                yield reply
+            else:
+                for reply in shared.model.generate_with_streaming(question, state):
+                    yield reply
+
+        except Exception:
+            traceback.print_exc()
+        finally:
+            t1 = time.time()
+            original_tokens = len(text_generation.encode(original_question)[0])
+            new_tokens = len(text_generation.encode(original_question + reply)[0]) - original_tokens
+            print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {seed})')
+            return
+      
+      
+      
 def ui():
     with gr.Accordion("Click for more information...", open=False):
         gr.Markdown(textwrap.dedent("""
@@ -361,10 +393,12 @@ def ui():
         This extension forces the output to conform to a specified JSON schema (or dies trying).
 
         ## Schema format
-        The schema is formatted in JSON. If you're in a hurry, here's an example schema:
+        The schema is formatted in JSON. Append to schemas.json using ,,, as separator. jsonSchema_id is for ease of user identifying the array number. If you're in a hurry, here's an example schema:
 
-        ```json
-        {
+        ,,,
+        {	
+            "jsonSchema_id": 2,
+            "$schema": "http://json-schema.org/draft-07/schema#",
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
@@ -374,10 +408,10 @@ def ui():
                     "type": "array",
                     "items": {"type": "string"},
                     "allowed_empty": true
-                }
+                },
+            "required": ["name", "age"]
             }
         }
-        ```
 
         Every value expects a `type` field, which can be one of `object`, `array`, `string`, `number`, `boolean`.
         
@@ -391,13 +425,13 @@ def ui():
     with gr.Row():
         enable_checkbox = gr.Checkbox(params['enabled'], label="Enable JSONformer plugin", info="Disabling this setting causes prompts to be executed normally")
 
-    with gr.Row():
-        schema_codebox = gr.Code(params['json_schema'], lines=14, language='json', label='JSON schema', interactive=True)
+    # with gr.Row():
+        # schema_codebox = gr.Code(params['json_schema'], lines=14, language='json', label='JSON schema', interactive=True)
 
     with gr.Row():
         manual_prompt_checkbox = gr.Checkbox(params['manual_prompt'], label="Manual prompt", info=textwrap.dedent("""
         USE WITH CAUTION! By default, this plugin appends to your prompt with some extra instructions for the LLM which also contain the schema. So you do not 
-        need to include the schema in your prompt manually, nor do you need to specify that the result be in JSON in your prompt. Note that this happens behind 
+        need to include the schema in your prompt manually. Note that this happens behind 
         the scenes and is invisible to you in the UI. If you would like to override this behavior and maintain full control of your prompt, you can enable this 
         checkbox. The plugin will still enforce the specified JSON schema, but you're on your own for informing the LLM that it needs to conform to the schema. 
         This increases the likliehood of the LLM failing to render and may cause the plugin to crash because the LLM isn't conforming to the schema."""))
@@ -414,7 +448,6 @@ def ui():
             Jsonformer.validate_schema(json_schema)
             params.update({
                 "enabled": enable,
-                "json_schema": schema,
                 "manual_prompt": manual_prompt,
             })
             now = time.ctime()
@@ -422,5 +455,5 @@ def ui():
         except Exception as e:
             return gr.update(value=f"ERROR saving settings: {e}", visible=True)
 
-    save_settings_button.click(save_settings, [enable_checkbox, schema_codebox, manual_prompt_checkbox], [info_box], api_name="set_jsonformer_settings")
+    save_settings_button.click(save_settings, [enable_checkbox, manual_prompt_checkbox], [info_box], api_name="set_jsonformer_settings")
 
