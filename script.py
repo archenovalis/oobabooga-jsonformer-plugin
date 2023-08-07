@@ -231,16 +231,16 @@ class Jsonformer:
             # the model will often assume we're at the end of the array. So we have
             # remove the most recent quote marks if present and use that prompt to
             # get the model to accurately tell us what it thinks.
-            next_tokens = self.get_next_tokens(
-                {
-                    'temperature': self.temperature,
-                    'max_new_tokens': 3
-                },
-                prompt_override=self.get_prompt().rstrip('"')
-            )
-            will_gen_another_element = ',' in next_tokens[:2]
-            if not will_gen_another_element:
-                break
+            # # next_tokens = self.get_next_tokens(
+                # # {
+                    # # 'temperature': self.temperature,
+                    # # 'max_new_tokens': 5
+                # # },
+                # # prompt_override=self.get_prompt().rstrip('"')
+            # # )
+            # # will_gen_another_element = ',' in next_tokens[:4]
+            # # if not will_gen_another_element:
+                # # break
             yield from self.add_to_progress(',')
             yield from self.apply_newline()
             yield from self.apply_indent()
@@ -348,27 +348,25 @@ def custom_generate_reply(question, original_question, seed, state, stopping_str
         return generate_func(question, original_question, seed, state, stopping_strings, is_chat)
 
 ##### Search for a "schema_id" in the prompt and use the corresponding schema to generate a response
-    try:
+    schema_match = re.search(r"^js=([A-Za-z0-9]+)$", question, re.MULTILINE)
+    if params['enabled'] and schema_match:
         try:
-            with open("/app/extensions/jsonformer/schemas.json", 'r') as file:
-                json_schemas = file.read().split(',,,')
+            try:
+                with open("/app/extensions/jsonformer/schemas.json", 'r') as file:
+                    json_schemas = file.read().split(',,,')
+            except:
+                with open("./extensions/jsonformer/schemas.json", 'r') as file:
+                    json_schemas = file.read().split(',,,')
         except:
-            with open("./extensions/jsonformer/schemas.json", 'r') as file:
-                json_schemas = file.read().split(',,,')
-    except:
-        print("schemas.json not found")
-        return
-
-
-    ### format: jsonSchema_id={array number}
-    ### requried to be on its own line, best location appears to be at the very bottom, sometimes the output will only provide a single response when the schema includes an array, adding multiple examples seems to fix this: ["{{TASK-1}}", "{{TASK-2}}"]
-    ### see schemas.json for examples
-    schema_match = re.search(r"^js=(\d+)$", question, re.MULTILINE)
-    disabled = False
-    if schema_match and params['enabled']:
-        schema_id = int(schema_match.group(1))
+            print("schemas.json not found")
+            return
+        ### format: js={identifier}
+        ### requried to be on its own line, best location appears to be at the very bottom, sometimes the output will only provide a single response when the schema includes an array, adding multiple examples seems to fix this: ["{{TASK-1}}", "{{TASK-2}}"]
+        ### see schemas.json for examples
+        schema_id = schema_match.group(1)
         try:
-            import_schema = json_schemas[schema_id]
+            index = [idx for idx, s in enumerate(json_schemas) if '"id": "' + schema_id in s][0]
+            import_schema = json_schemas[index]
         except:
             print("Schema not found in schemas.json")
             return

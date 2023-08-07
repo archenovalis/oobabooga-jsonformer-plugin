@@ -11,12 +11,12 @@ Changes:
 * enabled normal (non-schema output) when js=# is not in the prompt and on its own line
 
 
-example schema (append to schemas.json) incrementing the id of the last schema by 1:
+example schema (append to schemas.json):
 
 ```
 ,,,
 {	
-    "id": 2,
+    "id": "yourSchemaName",
     "type": "object",
     "properties": {
         "name": {"type": "string"},
@@ -39,7 +39,7 @@ Goal: Research Tacos
 
 Create a list of tasks to accomplish the goal.
 
-js=1
+js=yourSchemaName
 ### Response:
 ```
 
