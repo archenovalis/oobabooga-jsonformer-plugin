@@ -399,8 +399,7 @@ def ui():
 
         ,,,
         {	
-            "jsonSchema_id": 2,
-            "$schema": "http://json-schema.org/draft-07/schema#",
+            "id": "jsonSchemaName",
             "type": "object",
             "properties": {
                 "name": {"type": "string"},
@@ -441,10 +440,8 @@ def ui():
     with gr.Row():
         save_settings_button = gr.Button("Save JSONformer settings", variant='primary')
 
-    def save_settings(enable, schema, manual_prompt):
+    def save_settings(enable, manual_prompt):
         try:
-            json_schema = json.loads(schema)
-            Jsonformer.validate_schema(json_schema)
             params.update({
                 "enabled": enable,
                 "manual_prompt": manual_prompt,
